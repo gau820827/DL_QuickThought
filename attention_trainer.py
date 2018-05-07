@@ -112,7 +112,7 @@ def training_loop(model, criterion, optimizer, training_iter, dev_iter, train_ev
             print(
                    "Step",  step,
                    "Loss ", loss.data[0],
-                   " Train loss/acc: ", str(evaluate(model, train_eval_iter)),
+                   "Train loss/acc: ", str(evaluate(model, train_eval_iter)),
                    "Dev loss/acc: " + str(evaluate(model, dev_iter))
                  )
             # print('| {:5d}/{:5d} batches | ms/batch {:5.2f} | loss {:5.4f} | pure loss {:5.4f}'.format(
@@ -145,19 +145,22 @@ def save_model(model, val_loss, acc, epoch_number):
     global best_val_loss, best_acc
     save = "models/model-medium.pt"
     if not best_val_loss or val_loss < best_val_loss:
+        print ("Saving new model")
         with open(save, 'wb') as f:
             torch.save(model, f)
         f.close()
         best_val_loss = val_loss
-    # else:  # if loss doesn't go down, divide the learning rate by 5.
-    #     for param_group in optimizer.param_groups:
-    #         param_group['lr'] = param_group['lr'] * 0.2
+    else:  # if loss doesn't go down, divide the learning rate by 5.
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = param_group['lr'] * 0.2
     if not best_acc or acc > best_acc:
+        print ("Saving Current Best Model")
         with open(save[:-3]+'.best_acc.pt', 'wb') as f:
             torch.save(model, f)
         f.close()
         best_acc = acc
     with open(save[:-3]+'.epoch-{:02d}.pt'.format(epoch_number), 'wb') as f:
+        print ("Save model of epoch:", epoch_number)
         torch.save(model, f)
     f.close()
 
@@ -200,10 +203,11 @@ def train(model, epoch_number, cuda=True):
     total_pure_loss = 0  # without the penalization term
     start_time = time.time()
     step = 0
+    eval_size = 500
 
     training_iter = data_iter(dataset.training_set, batch_size)
-    train_eval_iter = eval_iter(dataset.training_set[0:500], batch_size)
-    dev_iter = eval_iter(dataset.dev_set[0:500], batch_size)
+    train_eval_iter = eval_iter(dataset.training_set[0:eval_size], batch_size)
+    dev_iter = eval_iter(dataset.dev_set[0:eval_size], batch_size)
 
     training_loop(model, criterion, optimizer, training_iter, dev_iter, train_eval_iter, step, total_pure_loss, total_loss, cuda)
 
@@ -214,8 +218,10 @@ def train(model, epoch_number, cuda=True):
 
 if __name__ == '__main__':
 
-    emb = data.Embedding()
-    dataset = data.Dataset(emb.word2idx)
+    dictionary = data.Dictionary()
+    # dictionary = data.Dictionary(path="/data/chc631/Yelp/data/dict.json")
+    dataset = data.Dataset(dictionary.word2idx)
+
 
     # Hyper Parameters
     learning_rate = 0.004
@@ -230,16 +236,17 @@ if __name__ == '__main__':
 
     default_config = {
             'dropout': 0.5,
-            'input_size': emb.__len__(),
+            'input_size': dictionary.__len__(),
             'nlayers': 2,
             'hidden_dim': 300,
-            'embedding_dim': 300,
+            'embedding_dim': 100, # must equal word-vector??
             'pooling': 'mean',
             'attention-unit': 350,
             'attention-hops': 1,
             'nfc': 512,
-            'dictionary': emb,
-            'word-vector': "",
+            'dictionary': dictionary,
+            'word-vector': "/home/chc631/chchao/dl/DL_QuickThought/.vector_cache/glove.6B.300d.txt.pt",
+            # 'word-vector': "",
             'num_labels': 5,
             'cuda' : True,
             'batch_size' : 20,
@@ -249,9 +256,9 @@ if __name__ == '__main__':
     best_acc = None
 
     config = default_config
-    # config["pooling"] = "all"
-    # model = models.Classifier(config)
-    model = models.LSTMSentiment(config)
+    config["pooling"] = "all"
+    model = models.Classifier(config)
+    # model = models.LSTMSentiment(config)
 
     # WTF is this
     I = Variable(torch.ones(model.config['batch_size'], model.config['attention-hops'], model.config['attention-hops']))
@@ -260,7 +267,8 @@ if __name__ == '__main__':
         I = I.cuda()
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=[0.9, 0.999], eps=1e-8, weight_decay=0)
 
     for epoch in range(50):
         train(model, epoch)
