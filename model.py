@@ -8,18 +8,53 @@ from torch.autograd import Variable
 from util import use_cuda
 
 
+class AttnRNN(nn.Module):
+    """The module for non-hierarchical model."""
+
+    def __init__(self, embedding_size, hidden_size, vocab_size, output_size):
+        super(AttnRNN, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_size)
+        self.encoder = nn.GRU(embedding_size, hidden_size // 2, bidirectional=True)
+        self.out = nn.Linear(hidden_size * 2, output_size)
+
+        self.init_weights()
+
+    def forward(self, inputs, sent_length, block_length):
+        # Embedding
+        embedded = self.embedding(inputs)
+
+        # Encoding
+        embedded = embedded.permute(1, 0, 2)
+        outputs, hidden = self.encoder(embedded)
+        # outputs (seq_len, batch, hidden_size * num_directions)
+        # hidden  (num_layers * num_directions, batch, hidden_size)
+
+        # Final output
+        hidden = torch.cat((outputs[0, :, :], outputs[-1, :, :]), dim=1)
+        output = F.softmax(self.out(hidden), dim=1)
+        return output
+
+    def init_weights(self):
+        initrange = 0.1
+        lin_layers = [self.out]
+        em_layer = [self.embedding]
+
+        for layer in lin_layers + em_layer:
+            layer.weight.data.uniform_(-initrange, initrange)
+            if layer in lin_layers:
+                layer.bias.data.fill_(0)
+
+
 class HierarchicalAttnRNN(nn.Module):
     """The module for heirarchical attention."""
 
-    def __init__(self, embedding_size, hidden_size, vocab_size, output_size, n_layers=1):
+    def __init__(self, embedding_size, hidden_size, vocab_size, output_size):
         super(HierarchicalAttnRNN, self).__init__()
 
         self.embedding = nn.Embedding(vocab_size, embedding_size)
-        self.LocalEncoder = EncoderRNN(embedding_size, hidden_size,
-                                       n_layers=n_layers, level='local')
+        self.LocalEncoder = EncoderRNN(embedding_size, hidden_size, level='local')
         self.LocalAttn = LocalAttn(hidden_size)
-        self.GlobalEncoder = EncoderRNN(hidden_size, hidden_size,
-                                        n_layers=n_layers, level='global')
+        self.GlobalEncoder = EncoderRNN(hidden_size, hidden_size, level='global')
         self.GlobalAttn = GlobalAttn(hidden_size)
         self.out = nn.Linear(hidden_size, output_size)
 
@@ -28,26 +63,6 @@ class HierarchicalAttnRNN(nn.Module):
         # Configurations
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
-
-    def initGlobalEncoderInput(self, input_length, batch_length,
-                               local_outputs, BLOCK_JUMPS, MAX_BLOCK):
-        """
-        Args: local_outputs: (batch, seq_len, embed_size)
-        """
-        # print("Max block = ", MAX_BLOCK)
-        # print("Block jump = ", BLOCK_JUMPS)
-        # print("input length = ", input_length)
-        hidden_size = self.hidden_size
-        global_input = Variable(torch.zeros(MAX_BLOCK, batch_length,
-                                            hidden_size))
-        global_input = global_input.cuda() if use_cuda else global_input
-        for ei in range(1, input_length + 1):
-            if ei % BLOCK_JUMPS == 0:
-                block_idx = int(ei / (BLOCK_JUMPS + 1))
-                global_input[block_idx, :, :] = local_outputs[ei - 1, :, :]
-                # print("ei = {}, local {} put in block number = {}"
-                #       .format(ei, ei - 1, block_idx))
-        return global_input
 
     def forward(self, inputs, sent_length, block_length):
         # Configurations
@@ -95,13 +110,12 @@ class HierarchicalAttnRNN(nn.Module):
 
 class EncoderRNN(nn.Module):
     """Vanilla encoder using pure gru."""
-    def __init__(self, embedding_size, hidden_size, n_layers=1, level='local'):
+    def __init__(self, embedding_size, hidden_size, level='local'):
         super(EncoderRNN, self).__init__()
         self.level = level
-        self.n_layers = n_layers
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
-        self.gru = nn.GRU(embedding_size, hidden_size // 2, num_layers=self.n_layers, bidirectional=True)
+        self.gru = nn.GRU(embedding_size, hidden_size // 2, bidirectional=True)
 
     def forward(self, embedded, sent_length, block_length):
         # embedded is of size (n_batch, seq_len, emb_dim)
@@ -122,7 +136,7 @@ class EncoderRNN(nn.Module):
         return outputs, hidden
 
     def initHidden(self, batch_size):
-        result = Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size), requires_grad=False)
+        result = Variable(torch.zeros(1, batch_size, self.hidden_size), requires_grad=False)
 
         if use_cuda:
             return result.cuda()

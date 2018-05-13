@@ -2,13 +2,14 @@
 import time
 import random
 import pickle
+import argparse
 
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch import optim
 
-from model import HierarchicalAttnRNN
+from model import HierarchicalAttnRNN, AttnRNN
 from util import gettime, load_model, use_cuda
 from util import add_sentence_paddings, addpaddings
 
@@ -94,6 +95,7 @@ def evaluate(model, data_iter):
 
         if use_cuda:
             idx_words = idx_words.cuda()
+            labels = labels.cuda()
 
         output = model(idx_words, sent_leng, blk_leng)
         _, predicted = torch.max(output.data, 1)
@@ -103,7 +105,7 @@ def evaluate(model, data_iter):
 
 
 def train(train_set, valid_set, lang,
-          batch_size=64, embedding_size=200,
+          model_style='Hie', batch_size=8, embedding_size=200,
           hidden_size=100, learning_rate=0.01, epoch_time=10,
           grad_clip=5, get_loss=10, save_model=5,
           output_file='HieAttn', pretrain=None, iter_num=None):
@@ -113,8 +115,11 @@ def train(train_set, valid_set, lang,
 
     # Initialize the model
     n_class = 5
-    model = HierarchicalAttnRNN(embedding_size, hidden_size, lang.n_words,
-                                n_class, batch_size)
+
+    if model_style == 'Hie':
+        model = HierarchicalAttnRNN(embedding_size, hidden_size, lang.n_words, n_class)
+    else:
+        model = AttnRNN(embedding_size, hidden_size, lang.n_words, n_class)
 
     if use_cuda:
         model.cuda()
@@ -158,7 +163,7 @@ def train(train_set, valid_set, lang,
 
             # For summary paddings, if the model is herarchical then pad between sentences
             # If the batch_size is 1 then we don't need to do sentence padding
-            if batch_size != 1:
+            if batch_size != 1 or model_style != 'Plain':
                 idx_words, sent_leng, blk_leng = add_sentence_paddings(idx_words)
             else:
                 idx_words = addpaddings(idx_words)
@@ -170,6 +175,7 @@ def train(train_set, valid_set, lang,
 
             if use_cuda:
                 idx_words = idx_words.cuda()
+                labels = labels.cuda()
 
             # Zero the gradient
             loss_optimizer.zero_grad()
@@ -223,11 +229,66 @@ def read_dataset():
     return train_data, valid_data, test_data, lang
 
 
-def main():
+def setupconfig(args):
+    """Set up and display the configuration."""
+    # print("Command Line Options:")
+    # # Read in command line parameters.
+
+    parameters = {}
+    for arg in vars(args):
+        parameters[arg] = getattr(args, arg)
+        # print("{} = {}".format(arg, parameters[arg]))
+    print("---------------")
+    print("Parameter Settings:")
+    for arg in parameters:
+        print("{} = {}".format(arg, parameters[arg]))
+    print("---------------")
+
+    return parameters
+
+
+def parse_argument():
+    """Hyperparmeter tuning."""
+    model_choices = ['Hie', 'Plain']
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-embed", "--embedding_size",
+                    type=int, default=200)
+
+    ap.add_argument("-lr", "--learning_rate",
+                    type=float, default=0.01)
+
+    ap.add_argument("-batch", "--batch_size",
+                    type=int, default=16)
+
+    ap.add_argument("-getloss", "--get_loss", type=int,
+                    default=100)
+
+    ap.add_argument("-model", "--model_style",
+                    choices=model_choices, default='Hie')
+
+    ap.add_argument("-epochsave", "--save_model", type=int, default=5)
+
+    ap.add_argument("-outputfile", "--output_file", default='Hie')
+
+    ap.add_argument("-gradclip", "--grad_clip", type=int, default=5)
+
+    ap.add_argument("-pretrain", "--pretrain", default=None)
+
+    ap.add_argument("-iternum", "--iter_num", default=None)
+
+    ap.add_argument("-epoch", "--epoch_time", type=int, default=50)
+
+    return ap.parse_args()
+
+
+def main(args):
     """The main to start the training."""
+    parameters = setupconfig(args)
     train_data, valid_data, test_data, yelp_lang = read_dataset()
-    train(train_data, valid_data, yelp_lang)
+    train(train_data, valid_data, yelp_lang, **parameters)
 
 
 if __name__ == '__main__':
-    main()
+    args = parse_argument()
+    main(args)

@@ -78,7 +78,7 @@ with open('./data/yelp_academic_dataset_review.json', 'rb') as f:
         data.append(yelp)
 
         # n += 1
-        # if (n >= 1000):
+        # if (n >= 10000):
         #     break
 
     # Dump to a pickle file
